@@ -1,0 +1,970 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0d0d0d" />
+  <meta name="description" content="vent. — a safe space to be heard. No judgment. No advice. Just space." />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="vent." />
+  <meta property="og:title" content="vent." />
+  <meta property="og:description" content="A safe space to be heard. No judgment. No advice. Just space." />
+  <meta property="og:type" content="website" />
+  <title>vent.</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0d0d0d; overflow-x: hidden; }
+    #root { min-height: 100vh; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- React + Babel via CDN — no build step needed -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script type="text/babel">
+const { useState, useRef, useEffect } = React;
+
+// ── Config ─────────────────────────────────────────────────────────────────
+// Add your Anthropic API key below for local testing.
+// For production (Vercel), set ANTHROPIC_API_KEY in environment variables
+// and wire it through a serverless function — see README.
+const ANTHROPIC_API_KEY = window.__VENT_CONFIG__?.apiKey || "";
+
+
+// Crisis lines by country
+const CRISIS_LINES = {
+  "United States":    { line: "988 Suicide & Crisis Lifeline", contact: "call or text 988" },
+  "United Kingdom":   { line: "Samaritans", contact: "call 116 123" },
+  "Australia":        { line: "Lifeline", contact: "call 13 11 14" },
+  "Canada":           { line: "Talk Suicide Canada", contact: "call 1-833-456-4566" },
+  "Ireland":          { line: "Samaritans", contact: "call 116 123" },
+  "New Zealand":      { line: "Lifeline", contact: "call 0800 543 354" },
+  "India":            { line: "iCall", contact: "call 9152987821" },
+  "South Africa":     { line: "SADAG", contact: "call 0800 456 789" },
+  "Germany":          { line: "Telefonseelsorge", contact: "call 0800 111 0 111" },
+  "France":           { line: "Numéro national de prévention du suicide", contact: "call 3114" },
+  "Spain":            { line: "Teléfono de la Esperanza", contact: "call 717 003 717" },
+  "Brazil":           { line: "CVV", contact: "call 188" },
+  "Japan":            { line: "Inochi no Denwa", contact: "call 0120-783-556" },
+  "Netherlands":      { line: "113 Zelfmoordpreventie", contact: "call 113" },
+  "Sweden":           { line: "Mind Självmordslinjen", contact: "call 90101" },
+  "Other":            { line: "Find A Helpline", contact: "visit findahelpline.com" },
+};
+
+const COUNTRIES = Object.keys(CRISIS_LINES);
+
+const SYSTEM_PROMPT = `You are the AI behind "Vent" — a safe, judgment-free space for people to express their feelings. Your role is purely to listen and validate, never to give unsolicited advice.
+
+Rules:
+- NEVER give advice unless the user explicitly asks for it
+- Reflect their emotions back warmly and naturally
+- Match their energy: if they're furious, don't be clinical. If they're sad, be gentle.
+- Keep responses SHORT — 1 to 3 sentences max. You're a listener, not a talker.
+- Occasionally use minimal prompts like "Tell me more." or "Go on..." to encourage them
+- Never judge, never minimize. You are warm, present, and real-feeling — not robotic.
+
+CRITICAL: If the user message contains [CRISIS-TIER-3] followed by crisis line info, lead with warmth then include that exact crisis line information in your response.
+If the user message contains [CRISIS-TIER-2] followed by crisis line info, acknowledge deeply then include that exact crisis line information.`;
+
+const OPENING_MESSAGES = [
+  "Hey. What's on your mind?",
+  "I'm here. Let it out.",
+  "No judgment here. What's going on?",
+  "This is your space. Say whatever you need to.",
+];
+
+const RELEASE_MODE_RESPONSES = [
+  "...", "I hear you.", "Go on.", "Mm.", "Keep going.", "I'm with you.",
+];
+
+const TIER1_RESPONSES = [
+  "That sounds really heavy. When you say that — are you talking about something specific, or is it feeling deeper than that?",
+  "I hear you. Are you venting about a situation, or has this been weighing on you for a while?",
+  "That landed. Are you talking about something in particular, or is this a bigger feeling?",
+];
+
+const THIRD_PARTY_PREFIXES = [
+  "my friend", "my brother", "my sister", "my mom", "my dad", "my parent",
+  "my partner", "my boyfriend", "my girlfriend", "my husband", "my wife",
+  "my colleague", "my coworker", "she said", "he said", "they said",
+  "she told", "he told", "they told", "she feels", "he feels", "they feel",
+  "a character", "in the movie", "in a movie", "in the show", "in the book",
+  "i'm writing", "i am writing", "writing a story", "writing about",
+  "the movie", "the show", "the book",
+];
+
+const QUESTION_PREFIXES = [
+  "why do people", "why do some", "what is self harm", "what is suicide",
+  "what causes suicide", "how do people", "do you know what",
+];
+
+const HYPERBOLE = [
+  "kill my boss", "kill him", "kill her", "kill them",
+  "could die of", "dying of embarrassment", "dying of boredom",
+  "this is killing me", "meeting is killing", "work is killing",
+  "i'm dead,", "i'm dead!", "im dead,", "im dead!",
+  "i'm dying,", "i'm dying!", "im dying,", "im dying!",
+  "lmao i'm dead", "omg i'm dead", "omg im dead",
+  "i want to kill him", "i want to kill her", "i want to kill them",
+  "gonna kill him", "gonna kill her", "gonna kill them",
+  "going to kill him", "going to kill her", "going to kill them",
+  "i could kill", "i could scream", "just so done, like",
+  "f*cking kill", "gonna f*cking kill", "i'll f*cking kill",
+  "screw this", "screw everything", "f*ck this job", "f*ck my life",
+  "f*ck everything", "this is so f*cked",
+];
+
+const TIER3_PHRASES = [
+  "want to die", "wanna die", "wants to die",
+  "kill myself", "killing myself",
+  "end it all", "end my life", "ending my life", "end it tonight",
+  "hurt myself", "hurting myself",
+  "self harm", "self-harm", "selfharm",
+  "cutting myself", "been cutting",
+  "suicidal", "suicide",
+  "dont want to live", "don't want to live",
+  "dont wanna live", "don't wanna live",
+  "take my own life", "taking my own life",
+  "not want to be alive", "dont want to be alive", "don't want to be alive",
+  "attempted suicide", "suicide attempt",
+  "tried to kill myself",
+  "not want to be here anymore", "dont want to be here anymore",
+  "don't want to be here anymore",
+  "f*cking kill myself", "just wanna f*cking die",
+  "so f*cking done with life", "f*ck this i want to die",
+  "i just want to f*cking die", "want to f*cking end it",
+];
+
+const TIER1_PHRASES = [
+  "don't see the point", "dont see the point",
+  "don't know what the point is", "dont know what the point is",
+  "no point anymore", "no point to", "no point in",
+  "what's the point", "whats the point",
+  "not worth it", "not worth living",
+  "can't do this anymore", "cant do this anymore",
+  "can't keep going", "cant keep going",
+  "can't go on", "cant go on",
+  "can't continue", "cant continue",
+  "want to disappear", "wanna disappear",
+  "feel invisible", "feeling invisible",
+  "like i'm invisible", "like im invisible",
+  "wish i wasn't here", "wish i wasnt here",
+  "wish i wasn't alive", "wish i wasnt alive",
+  "nobody cares about me", "no one cares about me",
+  "nobody would miss me", "no one would miss me",
+  "nobody cares if i", "no one cares if i",
+  "done with everything", "done with life",
+  "so done with everything", "so done with life",
+  "just so done", "so done with it",
+  "so over everything", "over everything", "over it all",
+  "tired of living", "tired of existing", "tired of being alive",
+  "nothing matters", "nothing matters anymore", "nothing matters to me",
+  "i give up", "given up on everything", "given up on life",
+  "i'm nothing", "im nothing", "feel like nothing", "i am nothing",
+  "feel like i'm nothing", "feel like im nothing",
+  "don't want to be here", "dont want to be here",
+  "exhausted with life", "exhausted with everything",
+  "see no reason to", "see no reason for",
+  "disappear from everything", "disappear from it all",
+  "f*ck everything", "f*ck this life", "f*ck my life",
+  "so f*cking done", "f*cking done with everything",
+  "f*cking done with life", "f*cking hate my life",
+  "f*cking pointless", "what's the f*cking point",
+  "whats the f*cking point", "f*ck this i give up",
+  "i just f*cking can't", "can't f*cking do this",
+  "i f*cking hate myself", "i hate myself so much",
+  "i'm so f*cking worthless", "feel like such a f*cking failure",
+  "nobody gives a f*ck about me", "nobody gives a sh*t about me",
+  "no one gives a f*ck", "no one gives a sh*t about me",
+];
+
+const TIER2_CONFIRM_PHRASES = [
+  "deeper", "both", "kind of", "it's more", "its more",
+  "yeah", "yes", "yep", "yea",
+  "for a while", "for months", "for years", "for a long time",
+  "been feeling this", "always feel", "every day", "all the time",
+  "don't know how much longer", "dont know how much longer",
+  "exhausted", "so tired", "been like this",
+  "hopeless", "no hope", "worthless", "pointless",
+  "can't see a way", "cant see a way",
+  "no way out", "everything", "it's everything", "its everything",
+  "bigger than that", "more than that",
+];
+
+const normalize = (s) => s.toLowerCase()
+  .replace(/[\u2018\u2019\u201A\u201B\u2032\u2035]/g, "'")
+  .replace(/[\u201C\u201D\u201E\u201F\u2033\u2036]/g, '"');
+
+const isThirdParty = (lower) =>
+  THIRD_PARTY_PREFIXES.some(p => lower.startsWith(p) || lower.includes(" " + p));
+const isQuestion = (lower) =>
+  lower.trim().endsWith("?") || QUESTION_PREFIXES.some(p => lower.includes(p));
+const isHyperbole = (lower) => HYPERBOLE.some(p => lower.includes(p));
+
+const detectCrisisTier = (text) => {
+  const lower = normalize(text);
+  if (isHyperbole(lower)) return null;
+  if (isThirdParty(lower) || isQuestion(lower)) return null;
+  if (TIER3_PHRASES.some(p => lower.includes(p))) return "TIER3";
+  if (TIER1_PHRASES.some(p => lower.includes(p))) return "TIER1";
+  return null;
+};
+
+const isTier1Question = (text) => TIER1_RESPONSES.some(r => r === text);
+
+const detectTier2FromContext = (text, prevAssistantMsg) => {
+  if (!prevAssistantMsg || !isTier1Question(prevAssistantMsg)) return false;
+  const lower = normalize(text);
+  return TIER2_CONFIRM_PHRASES.some(p => lower.includes(p));
+};
+
+// Country selector screen
+function CountrySelect({ onSelect }) {
+  const [selected, setSelected] = useState("");
+  const [search, setSearch] = useState("");
+
+  const filtered = COUNTRIES.filter(c =>
+    c.toLowerCase().includes(search.toLowerCase())
+  );
+
+  return (
+    <div style={{
+      minHeight: "100vh", background: "#0d0d0d",
+      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+      fontFamily: "'Georgia', serif", padding: "24px",
+      position: "relative", overflow: "hidden",
+    }}>
+      <div style={{
+        position: "fixed", inset: 0, zIndex: 0,
+        background: "radial-gradient(ellipse at 30% 60%, rgba(80,40,80,0.18) 0%, transparent 60%), radial-gradient(ellipse at 70% 20%, rgba(40,60,100,0.15) 0%, transparent 60%)",
+        pointerEvents: "none",
+      }} />
+      <div style={{ position: "relative", zIndex: 1, width: "100%", maxWidth: "420px" }}>
+        <div style={{ textAlign: "center", marginBottom: "40px" }}>
+          <div style={{ fontSize: "32px", fontWeight: "700", letterSpacing: "-1px", color: "#f0ece4", fontStyle: "italic", marginBottom: "8px" }}>
+            vent.
+          </div>
+          <div style={{ fontSize: "15px", color: "rgba(255,255,255,0.4)", lineHeight: "1.6", fontStyle: "italic" }}>
+            Before we start — where are you based?
+          </div>
+          <div style={{ fontSize: "12px", color: "rgba(255,255,255,0.2)", marginTop: "6px", letterSpacing: "0.5px" }}>
+            So we can show you the right support resources if you ever need them.
+          </div>
+        </div>
+
+        <input
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search your country..."
+          autoFocus
+          style={{
+            width: "100%", boxSizing: "border-box",
+            background: "rgba(255,255,255,0.05)",
+            border: "1px solid rgba(255,255,255,0.12)",
+            borderRadius: "12px", color: "rgba(255,255,255,0.8)",
+            fontSize: "14px", padding: "12px 16px",
+            outline: "none", fontFamily: "'Georgia', serif",
+            marginBottom: "12px",
+          }}
+        />
+
+        <div style={{
+          maxHeight: "320px", overflowY: "auto",
+          display: "flex", flexDirection: "column", gap: "6px",
+          scrollbarWidth: "none",
+        }}>
+          {filtered.map(country => (
+            <button key={country} onClick={() => setSelected(country)} style={{
+              background: selected === country ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.03)",
+              border: `1px solid ${selected === country ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.07)"}`,
+              borderRadius: "10px", color: selected === country ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.45)",
+              fontSize: "14px", padding: "11px 16px", cursor: "pointer",
+              textAlign: "left", transition: "all 0.15s", fontFamily: "'Georgia', serif",
+            }}>
+              {country === "Other" ? "🌍 Other / Prefer not to say" : country}
+            </button>
+          ))}
+        </div>
+
+        <button
+          onClick={() => selected && onSelect(selected)}
+          disabled={!selected}
+          style={{
+            width: "100%", marginTop: "20px",
+            background: selected ? "rgba(255,255,255,0.1)" : "transparent",
+            border: "1px solid rgba(255,255,255,0.12)",
+            color: selected ? "rgba(255,255,255,0.8)" : "rgba(255,255,255,0.2)",
+            fontSize: "12px", padding: "13px", borderRadius: "12px",
+            cursor: selected ? "pointer" : "default",
+            letterSpacing: "2px", textTransform: "uppercase",
+            transition: "all 0.2s", fontFamily: "'Georgia', serif",
+          }}>
+          Continue
+        </button>
+      </div>
+      <style>{`::-webkit-scrollbar { display: none; }`}</style>
+    </div>
+  );
+}
+
+// Main chat
+function VentApp() {
+  const [country, setCountry] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [releaseMode, setReleaseMode] = useState(false);
+  const [shredding, setShredding] = useState(false);
+  const [shredded, setShredded] = useState(false);
+  const [showMoodTracker, setShowMoodTracker] = useState(false);
+  const [moods, setMoods] = useState([]);
+  const [currentMood, setCurrentMood] = useState(null);
+  const [charCount, setCharCount] = useState(0);
+  const [savedVents, setSavedVents] = useState([]);
+  const [showSaved, setShowSaved] = useState(false);
+  const [savePrompt, setSavePrompt] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
+  const [isPremium, setIsPremium] = useState(false);
+  const [showPaywall, setShowPaywall] = useState(false);
+  const [ventCount, setVentCount] = useState(0);
+  const [waitlistEmail, setWaitlistEmail] = useState("");
+  const [waitlistSubmitted, setWaitlistSubmitted] = useState(false);
+  const [waitlistLoading, setWaitlistLoading] = useState(false);
+  const FREE_VENT_LIMIT = 3;
+  const FREE_SAVE_LIMIT = 3;
+  const messagesEndRef = useRef(null);
+
+  const handleCountrySelect = (c) => {
+    setCountry(c);
+    setMessages([{ role: "assistant", content: OPENING_MESSAGES[Math.floor(Math.random() * OPENING_MESSAGES.length)] }]);
+    setVentCount(1);
+  };
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const getCrisisLine = () => CRISIS_LINES[country] || CRISIS_LINES["Other"];
+
+  const getTier2Response = () => {
+    const { line, contact } = getCrisisLine();
+    const responses = [
+      `Thank you for trusting me with that. That takes courage to say. Real support exists if you ever want it — ${line}, ${contact}. I'm still here too.`,
+      `That sounds like something you've been carrying for a long time. I'm glad you said it. If it ever feels like too much, ${line} is always there — ${contact}. And so am I.`,
+      `I hear you. You don't have to go through this alone — ${line} is available anytime, ${contact}. I'm not going anywhere either.`,
+    ];
+    return responses[Math.floor(Math.random() * responses.length)];
+  };
+
+  const getTier3Response = () => {
+    const { line, contact } = getCrisisLine();
+    return `I hear you, and I'm not going anywhere. Please reach out to ${line} — ${contact}. I'm still here with you.`;
+  };
+
+  const sendMessage = async () => {
+    if (!input.trim() || loading) return;
+
+    const rawText = input.trim();
+    const userMessage = { role: "user", content: rawText };
+    const newMessages = [...messages, userMessage];
+    setMessages(newMessages);
+    setInput("");
+    setCharCount(0);
+    setLoading(true);
+
+    // Detect "done" — offer to save
+    if (isDoneMessage(rawText) && messages.filter(m => m.role === "user").length > 0) {
+      setLoading(false);
+      setSavePrompt(true);
+      return;
+    }
+
+    // Freemium gate — check on first message of each vent session
+    if (!isPremium && messages.filter(m => m.role === "user").length === 0) {
+      if (ventCount > FREE_VENT_LIMIT) {
+        setLoading(false);
+        setShowPaywall(true);
+        return;
+      }
+    }
+
+    if (releaseMode) {
+      await new Promise((r) => setTimeout(r, 700 + Math.random() * 500));
+      setMessages([...newMessages, { role: "assistant", content: RELEASE_MODE_RESPONSES[Math.floor(Math.random() * RELEASE_MODE_RESPONSES.length)] }]);
+      setLoading(false);
+      return;
+    }
+
+    const tier = detectCrisisTier(rawText);
+
+    // TIER 3: client-side, localised
+    if (tier === "TIER3") {
+      await new Promise((r) => setTimeout(r, 900 + Math.random() * 400));
+      setMessages([...newMessages, { role: "assistant", content: getTier3Response() }]);
+      setLoading(false);
+      return;
+    }
+
+    // TIER 2: context-aware, localised
+    const prevAssistantMsg = [...messages].reverse().find(m => m.role === "assistant")?.content;
+    if (!tier && detectTier2FromContext(rawText, prevAssistantMsg)) {
+      await new Promise((r) => setTimeout(r, 900 + Math.random() * 400));
+      setMessages([...newMessages, { role: "assistant", content: getTier2Response() }]);
+      setLoading(false);
+      return;
+    }
+
+    // TIER 1: client-side
+    if (tier === "TIER1") {
+      await new Promise((r) => setTimeout(r, 900 + Math.random() * 400));
+      setMessages([...newMessages, { role: "assistant", content: TIER1_RESPONSES[Math.floor(Math.random() * TIER1_RESPONSES.length)] }]);
+      setLoading(false);
+      return;
+    }
+
+    // Normal: send to API
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
+          system: SYSTEM_PROMPT,
+          messages: newMessages.map(m => ({ role: m.role, content: m.content })),
+        }),
+      });
+      const data = await response.json();
+      const text = data.content?.map((b) => b.text || "").join("") || "I'm here.";
+      setMessages([...newMessages, { role: "assistant", content: text }]);
+    } catch {
+      setMessages([...newMessages, { role: "assistant", content: "I'm still here. Keep going." }]);
+    }
+    setLoading(false);
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  };
+
+  const handleShred = () => {
+    setShredding(true);
+    setTimeout(() => { setShredded(true); setShredding(false); }, 1200);
+  };
+
+  const handleReset = () => {
+    setShredded(false);
+    setSavePrompt(false);
+    setJustSaved(false);
+    setMessages([{ role: "assistant", content: OPENING_MESSAGES[Math.floor(Math.random() * OPENING_MESSAGES.length)] }]);
+    setVentCount(prev => prev + 1);
+  };
+
+  const handleSaveVent = () => {
+    const ventMessages = messages.filter(m => m.role === "user");
+    if (ventMessages.length === 0) return;
+    if (!isPremium && savedVents.length >= FREE_SAVE_LIMIT) {
+      setShowPaywall(true);
+      return;
+    }
+    const saved = {
+      id: Date.now(),
+      date: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }),
+      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      preview: ventMessages[0].content.slice(0, 80) + (ventMessages[0].content.length > 80 ? "..." : ""),
+      messages: [...messages],
+    };
+    setSavedVents(prev => [saved, ...prev]);
+    setJustSaved(true);
+    setSavePrompt(false);
+    setTimeout(() => setJustSaved(false), 2500);
+  };
+
+  const handleWaitlistSubmit = async () => {
+    if (!waitlistEmail.includes("@") || waitlistLoading) return;
+    setWaitlistLoading(true);
+    // In production, send to your backend / Mailchimp / ConvertKit etc.
+    // For now, simulate a network request and log to console
+    console.log("Waitlist signup:", waitlistEmail);
+    await new Promise(r => setTimeout(r, 800));
+    setWaitlistLoading(false);
+    setWaitlistSubmitted(true);
+  };
+
+  const isDoneMessage = (text) => {
+    const t = text.trim().toLowerCase();
+    return ["done", "i'm done", "im done", "that's it", "thats it", "that's all", "thats all",
+      "i think that's it", "i think thats it", "i'm good", "im good", "thanks", "thank you"].includes(t);
+  };
+
+  const moodEmojis = ["😤", "😢", "😰", "😔", "😠", "😩", "😶", "😌"];
+
+  if (!country) return <CountrySelect onSelect={handleCountrySelect} />;
+
+  return (
+    <div style={{
+      minHeight: "100vh", background: "#0d0d0d",
+      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+      fontFamily: "'Georgia', serif", padding: "0", position: "relative", overflow: "hidden",
+    }}>
+      <div style={{
+        position: "fixed", inset: 0, zIndex: 0,
+        background: "radial-gradient(ellipse at 20% 50%, rgba(80,40,80,0.18) 0%, transparent 60%), radial-gradient(ellipse at 80% 20%, rgba(40,60,100,0.15) 0%, transparent 60%)",
+        pointerEvents: "none",
+      }} />
+      <div style={{
+        position: "fixed", inset: 0, zIndex: 1, opacity: 0.035,
+        backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
+        pointerEvents: "none",
+      }} />
+
+      <div style={{
+        position: "relative", zIndex: 2, width: "100%", maxWidth: "600px",
+        height: "100vh", display: "flex", flexDirection: "column", padding: "0 16px",
+      }}>
+        {/* Header */}
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "24px 0 16px", borderBottom: "1px solid rgba(255,255,255,0.06)",
+        }}>
+          <div>
+            <div style={{ fontSize: "26px", fontWeight: "700", letterSpacing: "-1px", color: "#f0ece4", fontStyle: "italic" }}>vent.</div>
+            <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.3)", letterSpacing: "2px", textTransform: "uppercase", marginTop: "2px" }}>
+              {isPremium ? "premium · unlimited" : `no judgment. just space.`}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            <button onClick={() => setShowMoodTracker(!showMoodTracker)} style={{
+              background: showMoodTracker ? "rgba(255,255,255,0.1)" : "transparent",
+              border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.5)",
+              fontSize: "11px", padding: "6px 12px", borderRadius: "20px", cursor: "pointer",
+              letterSpacing: "1px", textTransform: "uppercase", transition: "all 0.2s",
+            }}>Mood</button>
+            {savedVents.length > 0 && (
+              <button onClick={() => setShowSaved(!showSaved)} style={{
+                background: showSaved ? "rgba(100,180,255,0.12)" : "transparent",
+                border: `1px solid ${showSaved ? "rgba(100,180,255,0.3)" : "rgba(255,255,255,0.12)"}`,
+                color: showSaved ? "rgba(120,190,255,0.8)" : "rgba(255,255,255,0.5)",
+                fontSize: "11px", padding: "6px 12px", borderRadius: "20px", cursor: "pointer",
+                letterSpacing: "1px", textTransform: "uppercase", transition: "all 0.2s",
+              }}>◦ Saved ({savedVents.length})</button>
+            )}
+            <button onClick={() => setReleaseMode(!releaseMode)} style={{
+              background: releaseMode ? "rgba(180,100,100,0.25)" : "transparent",
+              border: `1px solid ${releaseMode ? "rgba(200,120,120,0.4)" : "rgba(255,255,255,0.12)"}`,
+              color: releaseMode ? "rgba(220,160,160,0.9)" : "rgba(255,255,255,0.5)",
+              fontSize: "11px", padding: "6px 12px", borderRadius: "20px", cursor: "pointer",
+              letterSpacing: "1px", textTransform: "uppercase", transition: "all 0.2s",
+            }}>{releaseMode ? "● Release" : "Release"}</button>
+          </div>
+        </div>
+
+        {/* Mood tracker */}
+        {showMoodTracker && (
+          <div style={{
+            background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)",
+            borderRadius: "12px", padding: "16px", margin: "12px 0", animation: "fadeIn 0.3s ease",
+          }}>
+            <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.35)", letterSpacing: "2px", textTransform: "uppercase", marginBottom: "12px" }}>
+              How are you feeling?
+            </div>
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              {moodEmojis.map((emoji) => (
+                <button key={emoji} onClick={() => {
+                  setCurrentMood(emoji);
+                  setMoods(prev => [...prev, { mood: emoji, time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }]);
+                }} style={{
+                  background: currentMood === emoji ? "rgba(255,255,255,0.12)" : "transparent",
+                  border: `1px solid ${currentMood === emoji ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.08)"}`,
+                  borderRadius: "8px", padding: "8px 10px", fontSize: "20px", cursor: "pointer",
+                  transition: "all 0.15s", transform: currentMood === emoji ? "scale(1.15)" : "scale(1)",
+                }}>{emoji}</button>
+              ))}
+            </div>
+            {moods.length > 0 && (
+              <div style={{ marginTop: "12px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                {moods.map((m, i) => (
+                  <div key={i} style={{
+                    fontSize: "11px", color: "rgba(255,255,255,0.3)",
+                    background: "rgba(255,255,255,0.04)", borderRadius: "6px", padding: "3px 8px",
+                  }}>{m.mood} {m.time}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Saved vents drawer */}
+        {showSaved && (
+          <div style={{
+            background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)",
+            borderRadius: "12px", padding: "16px", margin: "12px 0",
+            maxHeight: "280px", overflowY: "auto", animation: "fadeIn 0.3s ease",
+            scrollbarWidth: "none",
+          }}>
+            <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.25)", letterSpacing: "2px", textTransform: "uppercase", marginBottom: "12px" }}>
+              Saved vents
+            </div>
+            {savedVents.length === 0 ? (
+              <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.2)", fontStyle: "italic" }}>Nothing saved yet.</div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                {savedVents.map((v, i) => (
+                  <div key={v.id} style={{
+                    background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)",
+                    borderRadius: "10px", padding: "12px 14px",
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                      <div style={{ fontSize: "10px", color: "rgba(255,255,255,0.25)", letterSpacing: "1px" }}>
+                        {v.date} · {v.time}
+                      </div>
+                      <button onClick={() => setSavedVents(prev => prev.filter((_, idx) => idx !== i))} style={{
+                        background: "transparent", border: "none", color: "rgba(255,255,255,0.2)",
+                        fontSize: "11px", cursor: "pointer", padding: "0",
+                      }}>✕</button>
+                    </div>
+                    <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.45)", fontStyle: "italic", lineHeight: "1.5" }}>
+                      "{v.preview}"
+                    </div>
+                    <div style={{ fontSize: "10px", color: "rgba(255,255,255,0.2)", marginTop: "6px" }}>
+                      {v.messages.filter(m => m.role === "user").length} message{v.messages.filter(m => m.role === "user").length !== 1 ? "s" : ""}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {releaseMode && (
+          <div style={{
+            textAlign: "center", padding: "8px", fontSize: "11px",
+            color: "rgba(220,160,160,0.6)", letterSpacing: "2px", textTransform: "uppercase",
+          }}>
+            Release mode — just let it out. I'm barely here.
+          </div>
+        )}
+
+        {/* Messages */}
+        <div style={{
+          flex: 1, overflowY: "auto", padding: "16px 0",
+          display: "flex", flexDirection: "column", gap: "16px", scrollbarWidth: "none",
+        }}>
+          {!shredded ? (
+            <>
+              {messages.map((msg, i) => (
+                <div key={i} style={{
+                  display: "flex",
+                  justifyContent: msg.role === "user" ? "flex-end" : "flex-start",
+                  animation: "slideUp 0.3s ease",
+                }}>
+                  <div style={{
+                    maxWidth: "80%",
+                    background: msg.role === "user" ? "rgba(255,255,255,0.08)" : "transparent",
+                    border: msg.role === "user" ? "1px solid rgba(255,255,255,0.1)" : "none",
+                    borderRadius: msg.role === "user" ? "18px 18px 4px 18px" : "0",
+                    padding: msg.role === "user" ? "12px 16px" : "4px 0",
+                    color: msg.role === "user" ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.45)",
+                    fontSize: msg.role === "user" ? "15px" : "14px",
+                    lineHeight: "1.6",
+                    fontStyle: msg.role === "assistant" ? "italic" : "normal",
+                  }}>
+                    {msg.content}
+                  </div>
+                </div>
+              ))}
+              {loading && (
+                <div style={{ display: "flex", gap: "4px", padding: "4px 0", alignItems: "center" }}>
+                  {[0, 1, 2].map((i) => (
+                    <div key={i} style={{
+                      width: "5px", height: "5px", borderRadius: "50%",
+                      background: "rgba(255,255,255,0.25)",
+                      animation: `pulse 1.2s ${i * 0.2}s infinite ease-in-out`,
+                    }} />
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={{
+              flex: 1, display: "flex", flexDirection: "column",
+              alignItems: "center", justifyContent: "center", gap: "20px",
+              animation: "fadeIn 0.5s ease",
+            }}>
+              <div style={{ fontSize: "48px" }}>🔥</div>
+              <div style={{ color: "rgba(255,255,255,0.4)", fontSize: "14px", fontStyle: "italic", textAlign: "center" }}>
+                Gone. Just like that.
+              </div>
+              <button onClick={handleReset} style={{
+                background: "transparent", border: "1px solid rgba(255,255,255,0.15)",
+                color: "rgba(255,255,255,0.4)", fontSize: "11px",
+                padding: "8px 20px", borderRadius: "20px", cursor: "pointer",
+                letterSpacing: "2px", textTransform: "uppercase",
+              }}>Start fresh</button>
+            </div>
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+
+        {shredding && (
+          <div style={{
+            position: "fixed", inset: 0, zIndex: 100,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            background: "rgba(0,0,0,0.85)", animation: "fadeIn 0.1s ease",
+          }}>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: "60px", animation: "shake 0.3s infinite" }}>✂️</div>
+              <div style={{ color: "rgba(255,255,255,0.4)", marginTop: "16px", fontStyle: "italic", fontSize: "14px" }}>Shredding...</div>
+            </div>
+          </div>
+        )}
+
+        {/* Input */}
+        {!shredded && (
+          <div style={{ padding: "16px 0 24px", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <div style={{ position: "relative" }}>
+                <textarea
+                  value={input}
+                  onChange={(e) => { setInput(e.target.value); setCharCount(e.target.value.length); }}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Say whatever you need to..."
+                  rows={3}
+                  style={{
+                    width: "100%", boxSizing: "border-box",
+                    background: "rgba(255,255,255,0.04)",
+                    border: "1px solid rgba(255,255,255,0.09)",
+                    borderRadius: "14px", color: "rgba(255,255,255,0.8)",
+                    fontSize: "15px", lineHeight: "1.6", padding: "14px 16px 36px",
+                    resize: "none", outline: "none",
+                    fontFamily: "'Georgia', serif", transition: "border-color 0.2s",
+                  }}
+                  onFocus={(e) => e.target.style.borderColor = "rgba(255,255,255,0.2)"}
+                  onBlur={(e) => e.target.style.borderColor = "rgba(255,255,255,0.09)"}
+                />
+                <div style={{
+                  position: "absolute", bottom: "12px", right: "14px",
+                  fontSize: "11px", color: "rgba(255,255,255,0.2)",
+                }}>{charCount > 0 ? charCount : "↵ to send"}</div>
+              </div>
+              {/* Save prompt — shown when user says "done" */}
+              {savePrompt && (
+                <div style={{
+                  background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)",
+                  borderRadius: "12px", padding: "14px 16px", animation: "fadeIn 0.3s ease",
+                }}>
+                  <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.5)", fontStyle: "italic", marginBottom: "10px" }}>
+                    Would you like to save this vent to reflect on later?
+                  </div>
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <button onClick={handleSaveVent} style={{
+                      background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
+                      color: "rgba(255,255,255,0.7)", fontSize: "11px",
+                      padding: "7px 16px", borderRadius: "20px", cursor: "pointer",
+                      letterSpacing: "1px", textTransform: "uppercase", transition: "all 0.2s",
+                    }}>◦ Save it</button>
+                    <button onClick={() => { setSavePrompt(false); handleReset(); }} style={{
+                      background: "transparent", border: "1px solid rgba(255,255,255,0.08)",
+                      color: "rgba(255,255,255,0.3)", fontSize: "11px",
+                      padding: "7px 16px", borderRadius: "20px", cursor: "pointer",
+                      letterSpacing: "1px", textTransform: "uppercase", transition: "all 0.2s",
+                    }}>Let it go</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Just saved confirmation */}
+              {justSaved && (
+                <div style={{
+                  fontSize: "12px", color: "rgba(255,255,255,0.35)", fontStyle: "italic",
+                  textAlign: "center", animation: "fadeIn 0.3s ease", padding: "4px 0",
+                }}>Saved. It'll be there when you need it.</div>
+              )}
+
+              <div style={{ display: "flex", gap: "8px", justifyContent: "space-between" }}>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <button onClick={handleShred}
+                    onMouseEnter={(e) => { e.target.style.borderColor = "rgba(255,100,100,0.5)"; e.target.style.color = "rgba(255,120,120,0.9)"; }}
+                    onMouseLeave={(e) => { e.target.style.borderColor = "rgba(255,100,100,0.2)"; e.target.style.color = "rgba(255,120,120,0.5)"; }}
+                    style={{
+                      background: "transparent", border: "1px solid rgba(255,100,100,0.2)",
+                      color: "rgba(255,120,120,0.5)", fontSize: "11px",
+                      padding: "8px 16px", borderRadius: "20px", cursor: "pointer",
+                      letterSpacing: "1px", textTransform: "uppercase", transition: "all 0.2s",
+                    }}>✂ Shred</button>
+                  <button onClick={handleSaveVent}
+                    onMouseEnter={(e) => { e.target.style.borderColor = "rgba(100,180,255,0.4)"; e.target.style.color = "rgba(120,190,255,0.8)"; }}
+                    onMouseLeave={(e) => { e.target.style.borderColor = "rgba(100,180,255,0.15)"; e.target.style.color = "rgba(120,190,255,0.4)"; }}
+                    style={{
+                      background: "transparent", border: "1px solid rgba(100,180,255,0.15)",
+                      color: "rgba(120,190,255,0.4)", fontSize: "11px",
+                      padding: "8px 16px", borderRadius: "20px", cursor: "pointer",
+                      letterSpacing: "1px", textTransform: "uppercase", transition: "all 0.2s",
+                    }}>◦ Save</button>
+                </div>
+                <button onClick={sendMessage} disabled={!input.trim() || loading} style={{
+                  background: input.trim() && !loading ? "rgba(255,255,255,0.1)" : "transparent",
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  color: input.trim() && !loading ? "rgba(255,255,255,0.8)" : "rgba(255,255,255,0.2)",
+                  fontSize: "11px", padding: "8px 20px", borderRadius: "20px",
+                  cursor: input.trim() && !loading ? "pointer" : "default",
+                  letterSpacing: "1px", textTransform: "uppercase", transition: "all 0.2s",
+                }}>Send</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Paywall modal */}
+      {showPaywall && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 200,
+          background: "rgba(0,0,0,0.92)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          padding: "24px", animation: "fadeIn 0.3s ease",
+        }}>
+          <div style={{
+            width: "100%", maxWidth: "400px",
+            background: "#111", border: "1px solid rgba(255,255,255,0.1)",
+            borderRadius: "20px", padding: "32px 28px",
+            position: "relative",
+          }}>
+            <button onClick={() => { setShowPaywall(false); setWaitlistEmail(""); setWaitlistSubmitted(false); }} style={{
+              position: "absolute", top: "16px", right: "18px",
+              background: "transparent", border: "none",
+              color: "rgba(255,255,255,0.3)", fontSize: "18px", cursor: "pointer",
+            }}>✕</button>
+
+            {!waitlistSubmitted ? (
+              <>
+                <div style={{ textAlign: "center", marginBottom: "24px" }}>
+                  <div style={{ fontSize: "28px", fontWeight: "700", color: "#f0ece4", fontStyle: "italic", letterSpacing: "-1px", marginBottom: "8px" }}>
+                    vent. premium
+                  </div>
+                  <div style={{ fontSize: "14px", color: "rgba(255,255,255,0.4)", lineHeight: "1.6" }}>
+                    Premium is coming soon. Join the waitlist and be first to know — plus get early access pricing.
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: "24px", display: "flex", flexDirection: "column", gap: "10px" }}>
+                  {[
+                    ["Unlimited vents", "No daily limits, ever"],
+                    ["Unlimited saved vents", `Free plan saves up to ${FREE_SAVE_LIMIT}`],
+                    ["Priority responses", "Faster, richer AI listening"],
+                    ["Crisis support", "Always free, always here"],
+                  ].map(([title, sub]) => (
+                    <div key={title} style={{ display: "flex", gap: "12px", alignItems: "flex-start" }}>
+                      <div style={{ color: "rgba(120,190,255,0.7)", fontSize: "14px", marginTop: "1px", flexShrink: 0 }}>◦</div>
+                      <div>
+                        <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.75)" }}>{title}</div>
+                        <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.3)", marginTop: "2px" }}>{sub}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "16px" }}>
+                  <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.3)", letterSpacing: "1px", textTransform: "uppercase" }}>
+                    Coming soon · from $7.99 AUD/month
+                  </div>
+                  <input
+                    type="email"
+                    value={waitlistEmail}
+                    onChange={e => setWaitlistEmail(e.target.value)}
+                    placeholder="your@email.com"
+                    onKeyDown={e => { if (e.key === "Enter") handleWaitlistSubmit(); }}
+                    style={{
+                      width: "100%", boxSizing: "border-box",
+                      background: "rgba(255,255,255,0.05)",
+                      border: "1px solid rgba(255,255,255,0.12)",
+                      borderRadius: "12px", color: "rgba(255,255,255,0.8)",
+                      fontSize: "14px", padding: "13px 16px",
+                      outline: "none", fontFamily: "'Georgia', serif",
+                    }}
+                  />
+                  <button
+                    onClick={handleWaitlistSubmit}
+                    disabled={!waitlistEmail.includes("@") || waitlistLoading}
+                    style={{
+                      width: "100%",
+                      background: waitlistEmail.includes("@") ? "rgba(120,190,255,0.15)" : "transparent",
+                      border: `1px solid ${waitlistEmail.includes("@") ? "rgba(120,190,255,0.4)" : "rgba(255,255,255,0.1)"}`,
+                      color: waitlistEmail.includes("@") ? "rgba(120,190,255,0.9)" : "rgba(255,255,255,0.2)",
+                      fontSize: "12px", padding: "13px",
+                      borderRadius: "12px", cursor: waitlistEmail.includes("@") ? "pointer" : "default",
+                      letterSpacing: "2px", textTransform: "uppercase",
+                      transition: "all 0.2s", fontFamily: "'Georgia', serif",
+                    }}
+                  >
+                    {waitlistLoading ? "Joining..." : "Join the waitlist"}
+                  </button>
+                </div>
+
+                <div style={{ textAlign: "center", fontSize: "11px", color: "rgba(255,255,255,0.2)", lineHeight: "1.6" }}>
+                  No spam. Just one email when premium launches.
+                  <br />Crisis support is always free, regardless of plan.
+                </div>
+              </>
+            ) : (
+              <div style={{ textAlign: "center", padding: "20px 0" }}>
+                <div style={{ fontSize: "40px", marginBottom: "16px" }}>✓</div>
+                <div style={{ fontSize: "20px", fontWeight: "700", color: "#f0ece4", fontStyle: "italic", marginBottom: "12px" }}>
+                  You're on the list.
+                </div>
+                <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.4)", lineHeight: "1.7", marginBottom: "24px" }}>
+                  We'll email you at <span style={{ color: "rgba(120,190,255,0.7)" }}>{waitlistEmail}</span> when premium launches — with early access pricing.
+                </div>
+                <div style={{ fontSize: "12px", color: "rgba(255,255,255,0.25)", fontStyle: "italic" }}>
+                  In the meantime, keep venting. You have {FREE_VENT_LIMIT} free sessions per day.
+                </div>
+                <button onClick={() => { setShowPaywall(false); setWaitlistSubmitted(false); setWaitlistEmail(""); }} style={{
+                  marginTop: "24px",
+                  background: "transparent", border: "1px solid rgba(255,255,255,0.1)",
+                  color: "rgba(255,255,255,0.4)", fontSize: "11px",
+                  padding: "10px 24px", borderRadius: "20px", cursor: "pointer",
+                  letterSpacing: "2px", textTransform: "uppercase",
+                }}>Back to venting</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Free vent counter — only show for free users mid-session */}
+      {!isPremium && ventCount > 0 && ventCount <= FREE_VENT_LIMIT && (
+        <div style={{
+          position: "fixed", bottom: "120px", right: "20px", zIndex: 10,
+          fontSize: "10px", color: "rgba(255,255,255,0.2)",
+          letterSpacing: "1px", textTransform: "uppercase",
+          cursor: "pointer",
+        }} onClick={() => setShowPaywall(true)}>
+          {FREE_VENT_LIMIT - ventCount + 1} free vent{FREE_VENT_LIMIT - ventCount + 1 !== 1 ? "s" : ""} left · upgrade
+        </div>
+      )}
+
+      <style>{`
+        @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: translateY(0) } }
+        @keyframes pulse { 0%, 100% { opacity: 0.2; transform: scale(0.8) } 50% { opacity: 0.7; transform: scale(1.2) } }
+        @keyframes shake { 0%, 100% { transform: rotate(-5deg) } 50% { transform: rotate(5deg) } }
+        textarea::placeholder { color: rgba(255,255,255,0.18); }
+        ::-webkit-scrollbar { display: none; }
+      `}</style>
+    </div>
+  );
+}
+
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<VentApp />);
+  </script>
+</body>
+</html>
