@@ -487,18 +487,31 @@ function VentApp() {
     setTimeout(() => setJustSaved(false), 2500);
   };
 
-  const handleWaitlistSubmit = async () => {
-    if (!waitlistEmail.includes("@") || waitlistLoading) return;
-    setWaitlistLoading(true);
-    // In production, send to your backend / Mailchimp / ConvertKit etc.
-    // For now, simulate a network request and log to console
-   http://eepurl.com/jDm-yU
-    await new Promise(r => setTimeout(r, 800));
-    setWaitlistLoading(false);
-    setWaitlistSubmitted(true);
-  };
-
-  const isDoneMessage = (text) => {
+const handleWaitlistSubmit = async () => {
+  if (!waitlistEmail.includes("@") || waitlistLoading) return;
+  
+  setWaitlistLoading(true);
+  
+  try {
+   await fetch("https://app.us11.list-manage.com/subscribe/post?u=3db8e044eae0e45d3a279d4ea&id=4a8a2aae0a&f_id=00c0c0e1f0", {
+    method: "POST",
+    mode: "no-cors", // REQUIRED for Mailchimp
+    headers: {
+     "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      EMAIL: waitlistEmail,
+    }),
+  });
+  setWaitlistSubmitted(true);
+ } catch (error) {
+   console.error("Error submitting email:", error);
+ }
+  
+ setWaitlistLoading(false);
+};  
+  
+    const isDoneMessage = (text) => {
     const t = text.trim().toLowerCase();
     return ["done", "i'm done", "im done", "that's it", "thats it", "that's all", "thats all",
       "i think that's it", "i think thats it", "i'm good", "im good", "thanks", "thank you"].includes(t);
